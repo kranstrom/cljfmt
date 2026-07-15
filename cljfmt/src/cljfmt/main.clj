@@ -54,6 +54,12 @@
    [nil "--[no-]insert-missing-whitespace"
     :default (:insert-missing-whitespace? defaults)
     :id :insert-missing-whitespace?]
+   [nil "--line-breaks-in-ns MODE"
+    "MODE may be none, always, or multiple"
+    :default (:line-breaks-in-ns defaults)
+    :parse-fn keyword
+    :validate [#{:none :always :multiple}
+               "Must be none, always, or multiple"]]
    [nil "--[no-]parallel"
     :id :parallel?
     :default (:parallel? defaults)]

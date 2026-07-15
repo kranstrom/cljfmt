@@ -2125,6 +2125,159 @@
         "   [com.example.ERP.service :as erp]))"]
        {:sort-ns-references? true})))
 
+(deftest test-line-breaks-in-ns
+  (testing "line breaks with multiple dependencies"
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require"
+          "   b"
+          "   c"
+          "   a))"]
+         ["(ns foo"
+          "  (:require"
+          "   b"
+          "   c"
+          "   a))"]
+         {:line-breaks-in-ns :multiple}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require b c a))"]
+         ["(ns foo"
+          "  (:require"
+          "   b"
+          "   c"
+          "   a))"]
+         {:line-breaks-in-ns :multiple}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require b"
+          "            c"
+          "            a))"]
+         ["(ns foo"
+          "  (:require"
+          "   b"
+          "   c"
+          "   a))"]
+         {:line-breaks-in-ns :multiple}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require b"
+          "            [c :as d]"
+          "            a))"]
+         ["(ns foo"
+          "  (:require"
+          "   b"
+          "   [c :as d]"
+          "   a))"]
+         {:line-breaks-in-ns :multiple}))
+    (is (reformats-to?
+         ["(ns foo.bar"
+          "  (:require [c]"
+          "            [a.b :as b] ;; aabb"
+          "            ;; bbb"
+          "            b))"]
+         ["(ns foo.bar"
+          "  (:require"
+          "   [c]"
+          "   [a.b :as b] ;; aabb"
+          "   ;; bbb"
+          "   b))"]
+         {:line-breaks-in-ns    :multiple
+          :indent-line-comments? true}))
+    (is (reformats-to?
+         ["(ns foo.bar"
+          "  (:require [c]"
+          "            ^:keep a"
+          "            #?(:clj d)"
+          "            ^{:x 1} b))"]
+         ["(ns foo.bar"
+          "  (:require"
+          "   [c]"
+          "   ^:keep a"
+          "   #?(:clj d)"
+          "   ^{:x 1} b))"]
+         {:line-breaks-in-ns :multiple}))
+    (is (reformats-to?
+         ["(ns foo.bar"
+          "  (:require [c]"
+          "            ^:keep a"
+          "            #?(:clj d)"
+          "            ^{:x 1} b))"]
+         ["(ns foo.bar"
+          "  (:require"
+          "    [c]"
+          "    ^:keep a"
+          "    #?(:clj d)"
+          "    ^{:x 1} b))"]
+         {:line-breaks-in-ns              :multiple
+          :function-arguments-indentation :cursive}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:import a.b c.d [e.f G] [h.i J K]))"]
+         ["(ns foo"
+          "  (:import"
+          "   a.b"
+          "   c.d"
+          "   [e.f G]"
+          "   [h.i J K]))"]
+         {:line-breaks-in-ns :multiple}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:import a.b"
+          "           c.d"
+          "           (e.f G"
+          "                H"
+          "                I)))"]
+         ["(ns foo"
+          "  (:import"
+          "   a.b"
+          "   c.d"
+          "   (e.f G"
+          "        H"
+          "        I)))"]
+         {:line-breaks-in-ns :multiple}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require a b [e.f :as f :refer [g]] [i.j :as j :refer [k l]]))"]
+         ["(ns foo"
+          "  (:require"
+          "   a"
+          "   b"
+          "   [e.f :as f :refer [g]]"
+          "   [i.j :as j :refer [k l]]))"]
+         {:line-breaks-in-ns :multiple})))
+  (testing "no line break for single dependency"
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require a)"
+          "  (:import b))"]
+         ["(ns foo"
+          "  (:require a)"
+          "  (:import b))"]
+         {:line-breaks-in-ns :multiple}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require"
+          "   a))"]
+         ["(ns foo"
+          "  (:require a))"]
+         {:line-breaks-in-ns :multiple}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require a))"]
+         ["(ns foo"
+          "  (:require"
+          "   a))"]
+         {:line-breaks-in-ns :always}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require"
+          "   a))"]
+         ["(ns foo"
+          "  (:require"
+          "   a))"]
+         {:line-breaks-in-ns :always}))))
+
 (deftest cursive-and-zprint-function-argument-indents-depend-on-first-element
   (let [input ["(foo"
                "bar)"

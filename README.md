@@ -370,6 +370,19 @@ In order to load the standard configuration file from Leiningen, add the
   See [INDENTS.md][] for a complete explanation. This will **replace**
   the default indents.
 
+* `:line-breaks-in-ns` -
+  - `:none` if cljfmt should leave line breaks within `ns` alone.
+  - `:multiple` to only break lines when there are multiple dependencies,
+    while keeping single dependencies next to the `ns` reference symbol.
+    This follows [Clojure Style Guide: Line breaks in
+ns](https://github.com/bbatsov/clojure-style-guide#line-breaks-in-ns)
+  - `:always` to move all dependencies to separate lines from the `ns`
+    reference symbol. This follows [Stuart
+Sierra: How to ns - Line
+Breaks](https://stuartsierra.com/2016/clojure-how-to-ns.html#line-breaks).
+
+  Defaults to `:none`
+
 * `:normalize-newlines-at-file-end?` -
   true if cljfmt should ensure files end with exactly one newline
   character. This will remove multiple trailing blank lines and ensure

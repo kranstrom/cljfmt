@@ -212,6 +212,11 @@
 (defn- uneval? [zloc]
   (= (z/tag zloc) :uneval))
 
+(defn- right-siblings [zloc]
+  (->> (iterate z/right zloc)
+       (remove uneval?)
+       (take-while identity)))
+
 (defn- index-of [zloc]
   (->> (iterate z/left zloc)
        (remove uneval?)
@@ -392,6 +397,7 @@
    :indent-line-comments?                 false
    :indentation?                          true
    :indents                               default-indents
+   :line-breaks-in-ns                    :none
    :normalize-newlines-at-file-end?       false
    :insert-missing-whitespace?            true
    :remove-blank-lines-in-forms?          false
@@ -607,6 +613,39 @@
 
 (defn sort-ns-references [form]
   (transform form edit-all ns-reference? sort-arguments))
+
+(defn- split-dependencies [zloc]
+  (loop [z zloc]
+    (let [z' (if (preceded-by-line-break? z) z (z/insert-left* z (n/newlines 1)))]
+      (if-let [nxt (z/right z')]
+        (recur nxt)
+        (z/up z')))))
+
+(defn- collapse-dependency [zloc req-node]
+  (let [nodes-between (->> (iterate z/left* (z/left* zloc))
+                           (take-while #(and % (not= (z/node %) req-node))))]
+    (if (some comment? nodes-between)
+      (z/up zloc)
+      (loop [z (z/left* zloc)]
+        (if (= (z/node z) req-node)
+          (z/up z)
+          (recur (if (clojure-whitespace? z)
+                   (z/remove* z)
+                   (z/left* z))))))))
+
+(defn- align-ns-references [zloc mode]
+  (let [req (z/down zloc)
+        dep (z/right req)
+        deps (count (right-siblings dep))]
+    (cond
+      (> deps 1) (split-dependencies dep)
+      (not= deps 1) zloc
+      (= mode :always) (split-dependencies dep)
+      (preceded-by-line-break? dep) (collapse-dependency dep (z/node req))
+      :else zloc)))
+
+(defn line-breaks-in-ns [form opts]
+  (transform form edit-all ns-reference? #(align-ns-references % (:line-breaks-in-ns opts))))
 
 (defn- reduce-columns [zloc f init]
   (loop [zloc zloc, col 0, acc init]
@@ -906,6 +945,8 @@
      (-> form
          (cond-> (:sort-ns-references? opts)
            sort-ns-references)
+         (cond-> (not= (:line-breaks-in-ns opts) :none)
+           (line-breaks-in-ns opts))
          (cond-> (:split-keypairs-over-multiple-lines? opts)
            split-keypairs-over-multiple-lines)
          (cond-> (:remove-consecutive-blank-lines? opts)
