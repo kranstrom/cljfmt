@@ -319,7 +319,7 @@
       (qualify-symbol-by-ns-name sym (:ns-name context))))
 
 (defn- string-matches-key-part? [s key-part]
-  (if (pattern? key-part) (re-find key-part s) (= s (name key-part))))
+  (if (pattern? key-part) (and s (re-find key-part s)) (= s (name key-part))))
 
 (defn- parts-match-vector-key? [sym-ns sym-name [ns-key name-key]]
   (and (string-matches-key-part? sym-ns ns-key)
@@ -425,8 +425,54 @@
         key-order  (cond
                      (qualified-symbol? key) 0
                      (simple-symbol? key)    1
-                     (pattern? key)          2)]
+                     (pattern? key)          2
+                     :else                   3)]
     [(- max-depth) key-order (str key)]))
+
+(defn- extract-sym-info [zloc context]
+  (when-let [sym (form-symbol zloc)]
+    (let [sym-full (fully-qualified-symbol sym context)]
+      [(name sym) sym-full (or (some-> sym-full namespace) (namespace sym))])))
+
+(defn- pattern-match-fn [k]
+  (if (vector? k)
+    (fn [ns name] (and name (parts-match-vector-key? ns name k)))
+    (fn [_ name] (and name (re-find k name)))))
+
+(defn- compile-indent-group [group context]
+  (let [[key _] (first group)]
+    (if (or (pattern? key) (vector? key))
+      {:type     :pattern
+       :breakers (mapv (fn [rule]
+                         [(pattern-match-fn (first rule))
+                          (make-indenter rule context)])
+                       group)}
+      {:type     :exact
+       :breakers (into {} (map (fn [rule]
+                                 (let [k        (first rule)
+                                       lookup-k (if (qualified-symbol? k) k (name k))]
+                                   [lookup-k (make-indenter rule context)]))
+                               group))})))
+
+(defn- compile-indenters [sorted-indents context]
+  (let [;; Group indents by their primary sort criteria: [-max-depth, key-order]
+        groups (partition-by #(subvec (indent-order %) 0 2) sorted-indents)
+        compiled-groups (mapv #(compile-indent-group % context) groups)]
+    (fn [zloc]
+      (let [[sym0-name sym0-full sym0-ns] (extract-sym-info zloc context)
+            [sym1-name sym1-full sym1-ns] (when-let [z1 (z/up zloc)] (extract-sym-info z1 context))
+            [sym2-name sym2-full sym2-ns] (when-let [z2 (some-> zloc z/up z/up)] (extract-sym-info z2 context))]
+        (some (fn [{:keys [type breakers]}]
+                (if (= type :exact)
+                  (some #(when-let [b (get breakers %)] (b zloc))
+                        [sym0-name sym0-full sym1-name sym1-full sym2-name sym2-full])
+                  (some (fn [[match? b]]
+                          (when (or (match? sym0-ns sym0-name)
+                                    (match? sym1-ns sym1-name)
+                                    (match? sym2-ns sym2-name))
+                            (b zloc)))
+                        breakers)))
+              compiled-groups)))))
 
 (defn- custom-indent [zloc indenter context]
   (or (when indenter (indenter zloc))
@@ -461,9 +507,8 @@
          context (merge (select-keys opts [:function-arguments-indentation
                                            :alias-map :refer-map])
                         {:ns-name ns-name})
-         indenter (some->> (seq sorted-indents)
-                           (map #(make-indenter % context))
-                           (apply some-fn))]
+         indenter (when (seq sorted-indents)
+                    (compile-indenters sorted-indents context))]
      (transform form edit-all #(should-indent? % opts)
                 #(indent-line % indenter context)))))
 
