@@ -3276,3 +3276,90 @@
              p/parse-string-all
              unalign-form
              n/string))))
+
+(deftest test-insert-missing-blank-lines
+  (testing "Empty Lines Between Top-Level Forms: https://guide.clojure.style/#empty-lines-between-top-level-forms"
+    (is (reformats-to?
+         ["(def a 1)"
+          "(defn foo [x] (+ x 1))"]
+         ["(def a 1)"
+          ""
+          "(defn foo [x] (+ x 1))"]
+         {:insert-missing-blank-lines? true}))
+    (is (reformats-to?
+         ["(def a 1)"
+          "(def b 2)"]
+         ["(def a 1)"
+          "(def b 2)"]
+         {:insert-missing-blank-lines? true}))
+    (is (reformats-to?
+         ["(declare foo)"
+          "(declare bar)"]
+         ["(declare foo)"
+          "(declare bar)"]
+         {:insert-missing-blank-lines? true}))
+    (is (reformats-to?
+         ["(declare foo)"
+          "(defn bar [x] x)"]
+         ["(declare foo)"
+          ""
+          "(defn bar [x] x)"]
+         {:insert-missing-blank-lines? true})))
+  (testing "Configurable :groupable-forms"
+    ;; Custom groupable-forms replaces the defaults
+    (is (reformats-to?
+         ["(def b 2)"
+          "(def a 1)"
+          "(defrecord Foo [])"
+          "(defrecord Bar [])"]
+         ["(def b 2)"
+          ""
+          "(def a 1)"
+          ""
+          "(defrecord Foo [])"
+          "(defrecord Bar [])"]
+         {:insert-missing-blank-lines? true
+          :groupable-forms             #{'defrecord}}))
+    ;; extra-groupable-forms merges with defaults
+    (is (reformats-to?
+         ["(def b 2)"
+          "(def a 1)"
+          "(defrecord Foo [])"
+          "(defrecord Bar [])"]
+         ["(def b 2)"
+          "(def a 1)"
+          "(defrecord Foo [])"
+          "(defrecord Bar [])"]
+         {:insert-missing-blank-lines? true
+          :extra-groupable-forms       #{'defrecord}})))
+  (testing "Comments associated with forms"
+    ;; Should insert blank line BEFORE the comment describing the form, not between comment and form.
+    (is (reformats-to?
+         ["(def a 1)"
+          ";; comment for b"
+          "(defn b [])"]
+         ["(def a 1)"
+          ""
+          ";; comment for b"
+          "(defn b [])"]
+         {:insert-missing-blank-lines? true}))
+    ;; Inline comments belong to the previous form, should insert blank line AFTER the inline comment
+    (is (reformats-to?
+         ["(def a 1) ;; inline comment"
+          "(defn b [])"]
+         ["(def a 1) ;; inline comment"
+          ""
+          "(defn b [])"]
+         {:insert-missing-blank-lines? true}))
+    ;; Multiple comments
+    (is (reformats-to?
+         ["(def a 1) ;; inline"
+          ";; c1"
+          ";; c2"
+          "(defn b [])"]
+         ["(def a 1) ;; inline"
+          ""
+          ";; c1"
+          ";; c2"
+          "(defn b [])"]
+         {:insert-missing-blank-lines? true}))))

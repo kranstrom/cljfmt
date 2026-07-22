@@ -370,6 +370,22 @@ In order to load the standard configuration file from Leiningen, add the
   See [INDENTS.md][] for a complete explanation. This will **replace**
   the default indents.
 
+* `:insert-missing-blank-lines?` -
+  true if cljfmt should enforce empty lines between top-level
+  forms. Consecutive forms of the same groupable type (e.g. `def`,
+  `defonce`, `declare`) are kept together without blank separators.
+  Defaults to false. **Experimental.**
+
+* `:groupable-forms` -
+  a set of symbols for forms that should be grouped together without
+  blank line separators when `:insert-missing-blank-lines?` is enabled.
+  Defaults to `#{'def 'defonce 'declare}`. This will **replace** the
+  default groupable forms.
+
+* `:extra-groupable-forms` -
+  a set of symbols to **merge** with the default groupable forms
+  instead of replacing them.
+
 * `:normalize-newlines-at-file-end?` -
   true if cljfmt should ensure files end with exactly one newline
   character. This will remove multiple trailing blank lines and ensure

@@ -51,6 +51,9 @@
    [nil "--[no-]indent-line-comments"
     :default (:indent-line-comments? defaults)
     :id :indent-line-comments?]
+   [nil "--[no-]insert-missing-blank-lines"
+    :default (:insert-missing-blank-lines? defaults)
+    :id :insert-missing-blank-lines?]
    [nil "--[no-]insert-missing-whitespace"
     :default (:insert-missing-whitespace? defaults)
     :id :insert-missing-whitespace?]

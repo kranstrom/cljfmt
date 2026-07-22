@@ -388,6 +388,9 @@
    :extra-aligned-forms                   {}
    :extra-blank-line-forms                {}
    :extra-indents                         {}
+   :extra-groupable-forms                 #{}
+   :groupable-forms                       #{'def 'defonce 'declare}
+   :insert-missing-blank-lines?           false
    :function-arguments-indentation        :community
    :indent-line-comments?                 false
    :indentation?                          true
@@ -756,6 +759,74 @@
            (z/list? (z/up zloc)))
        (some #(matching-form-index? zloc % context) form-indexes)))
 
+(defn- groupable-top-level-form? [zloc forms context]
+  (and (z/list? zloc)
+       (some #(form-matches-key? (z/down zloc) % context) forms)))
+
+(defn- preceding-whitespaces-and-comments [z]
+  (->> (iterate z/left* z)
+       (next)
+       (take-while #(some-> % z/tag #{:whitespace :newline :comment}))))
+
+(defn- insert-missing-blank-lines-zf [zloc forms context]
+  (if-not zloc
+    zloc
+    (loop [z zloc
+           prev-def? false]
+      (let [is-def? (groupable-top-level-form? z forms context)
+            group-def? (and prev-def? is-def?)]
+        (if (and (not group-def?) (z/left z)) ; Not the first element
+          (let [lefts (preceding-whitespaces-and-comments z)
+                has-blank-line? (some #(and (#{:whitespace :newline} (z/tag %))
+                                            (>= (count (re-seq #"\n" (z/string %))) 2))
+                                      lefts)]
+            (if has-blank-line?
+              (if-let [nxt (z/right z)]
+                (recur nxt is-def?)
+                z)
+              (let [lefts-vec (vec lefts)
+                    ;; Find the first newline AFTER the previous form
+                    ;; (which is the last newline in lefts-vec since it's ordered right-to-left)
+                    newline-idx (->> lefts-vec
+                                     (keep-indexed (fn [idx n]
+                                                     (when (and (#{:whitespace :newline} (z/tag n))
+                                                                (includes? (z/string n) "\n"))
+                                                       idx)))
+                                     (last))
+                    z' (if newline-idx
+                         (z/replace (nth lefts-vec newline-idx) (n/newlines 2))
+                         (if-let [last-comment-idx (->> lefts-vec
+                                                        (keep-indexed (fn [idx n] (when (= :comment (z/tag n)) idx)))
+                                                        last)]
+                           (let [target-idx (dec last-comment-idx)]
+                             (if (neg? target-idx)
+                               (z/insert-left* z (n/newlines 1))
+                               (z/insert-left* (nth lefts-vec target-idx) (n/newlines 1))))
+                           (let [furthest (peek lefts-vec)]
+                             (if (some-> furthest z/tag #{:whitespace :newline})
+                               (z/replace furthest (n/newlines 2))
+                               (z/insert-left* z (n/newlines 2))))))
+                    ;; z' points to the replaced newline. We must navigate right to find the new z.
+                    new-z (->> z'
+                               (iterate z/right*)
+                               (remove #(some-> % z/tag #{:whitespace :newline :comment}))
+                               first)
+                    next-z (some-> new-z z/right)]
+                (if next-z
+                  (recur next-z is-def?)
+                  (or new-z z')))))
+          (if-let [nxt (z/right z)]
+            (recur nxt is-def?)
+            z))))))
+
+(defn- insert-missing-blank-lines [form opts]
+  (let [ns-name (or (::ns-name opts) (find-namespace (z/of-node form)))
+        context {:alias-map (:alias-map opts)
+                 :refer-map (:refer-map opts)
+                 :ns-name ns-name}
+        forms (into (:groupable-forms opts) (:extra-groupable-forms opts))]
+    (transform form #(insert-missing-blank-lines-zf % forms context))))
+
 (defn align-form-columns [form aligned-forms opts]
   (let [ns-name  (or (::ns-name opts) (find-namespace (z/of-node form)))
         context  {:alias-map (:alias-map opts)
@@ -908,6 +979,8 @@
            sort-ns-references)
          (cond-> (:split-keypairs-over-multiple-lines? opts)
            split-keypairs-over-multiple-lines)
+         (cond-> (:insert-missing-blank-lines? opts)
+           (insert-missing-blank-lines opts))
          (cond-> (:remove-consecutive-blank-lines? opts)
            remove-consecutive-blank-lines)
          (cond-> (:remove-surrounding-whitespace? opts)
