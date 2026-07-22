@@ -3276,3 +3276,411 @@
              p/parse-string-all
              unalign-form
              n/string))))
+
+(deftest test-line-breaking
+  (testing "No Blank Lines Within Definition Forms: https://guide.clojure.style/#no-blank-lines-within-def-forms"
+    (is (reformats-to?
+         ["(let [a 1 b 2] (+ a b))"]
+         ["(let [a 1"
+          "      b 2]"
+          "  (+ a b))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(let [a 1"
+          ""
+          "      b 2] (+ a b))"]
+         ["(let [a 1"
+          "      b 2]"
+          "  (+ a b))"]
+         {:line-breaking? true
+          :remove-blank-lines-in-forms? true
+          :blank-line-forms {}}))
+    (is (reformats-to?
+         ["(cond (test-one) (expr-one) (test-two) (expr-two))"]
+         ["(cond"
+          "  (test-one) (expr-one)"
+          "  (test-two) (expr-two))"]
+         {:line-breaking? true}))
+    ;; Issue 60: Custom line break pattern for pairs with prefix
+    (is (reformats-to?
+         ["(cond (test-one) (expr-one) (test-two) (expr-two))"]
+         ["(cond"
+          "  (test-one)"
+          "  ,,(expr-one)"
+          ""
+          "  (test-two)"
+          "  ,,(expr-two))"]
+         {:line-breaking? true
+          :line-breaks {'cond [[:pairs 0 {:blank-lines? true :split-pairs? true :pair-prefix ",,"}]]}})))
+  (testing "Line Breaks in `ns`: https://guide.clojure.style/#line-break-ns-declaration"
+    ;; By default, multiple dependencies are placed on separate lines and located after require/import
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require"
+          "   b"
+          "   c"
+          "   a))"]
+         ["(ns foo"
+          "  (:require"
+          "   b"
+          "   c"
+          "   a))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require b c a))"]
+         ["(ns foo"
+          "  (:require"
+          "   b"
+          "   c"
+          "   a))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require b"
+          "            c"
+          "            a))"]
+         ["(ns foo"
+          "  (:require"
+          "   b"
+          "   c"
+          "   a))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require b"
+          "            [c :as d]"
+          "            a))"]
+         ["(ns foo"
+          "  (:require"
+          "   b"
+          "   [c :as d]"
+          "   a))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(ns foo.bar"
+          "  (:require [c]"
+          "            [a.b :as b] ;; aabb"
+          "            ;; bbb"
+          "            b))"]
+         ["(ns foo.bar"
+          "  (:require"
+          "   [c]"
+          "   [a.b :as b] ;; aabb"
+          "   ;; bbb"
+          "   b))"]
+         {:line-breaking? true
+          :indent-line-comments?       true}))
+    (is (reformats-to?
+         ["(ns foo.bar"
+          "  (:require [c]"
+          "            ^:keep a"
+          "            #?(:clj d)"
+          "            ^{:x 1} b))"]
+         ["(ns foo.bar"
+          "  (:require"
+          "   [c]"
+          "   ^:keep a"
+          "   #?(:clj d)"
+          "   ^{:x 1} b))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(ns foo.bar"
+          "  (:require [c]"
+          "            ^:keep a"
+          "            #?(:clj d)"
+          "            ^{:x 1} b))"]
+         ["(ns foo.bar"
+          "  (:require"
+          "    [c]"
+          "    ^:keep a"
+          "    #?(:clj d)"
+          "    ^{:x 1} b))"]
+         {:line-breaking? true
+          :function-arguments-indentation :cursive}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:import a.b c.d [e.f G] [h.i J K]))"]
+         ["(ns foo"
+          "  (:import"
+          "   a.b"
+          "   c.d"
+          "   [e.f G]"
+          "   [h.i J K]))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:import a.b"
+          "           c.d"
+          "           (e.f G"
+          "                H"
+          "                I)))"]
+         ["(ns foo"
+          "  (:import"
+          "   a.b"
+          "   c.d"
+          "   (e.f G"
+          "        H"
+          "        I)))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require a b [e.f :as f :refer [g]] [i.j :as j :refer [k l]]))"]
+         ["(ns foo"
+          "  (:require"
+          "   a"
+          "   b"
+          "   [e.f :as f :refer [g]]"
+          "   [i.j :as j :refer [k l]]))"]
+         {:line-breaking? true}))
+    ;; By default no line breaks for single dependency per Clojure Style Guide
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require a)"
+          "  (:import b))"]
+         ["(ns foo"
+          "  (:require a)"
+          "  (:import b))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require"
+          "   a))"]
+         ["(ns foo"
+          "  (:require a))"]
+         {:line-breaking? true}))
+    ;; Support for single dependency to also show on new line: https://stuartsierra.com/2016/clojure-how-to-ns.html#line-breaks
+    (is (reformats-to?
+         ["(ns foo"
+          "  (:require a))"]
+         ["(ns foo"
+          "  (:require"
+          "   a))"]
+         {:line-breaking? true
+          :line-breaks {'ns [[:ns {:single-dependency-newline? true}]]}}))
+    ;; Issue 412: Support for first entry on same line as a common variant
+    (is (reformats-to?
+         ["(ns my-app.core"
+          "  (:require"
+          "    [clojure.string :as str]"
+          "    [clojure.set :as set]))"]
+         ["(ns my-app.core"
+          "  (:require [clojure.string :as str]"
+          "            [clojure.set :as set]))"]
+         {:line-breaking? true
+          :line-breaks {'ns [[:ns {:first-entry-same-line? true}]]}})))
+  (testing "Optional New Line After Function Name: https://guide.clojure.style/#optional-new-line-after-fn-name"
+    ;; Formatting without docstring
+    (is (reformats-to?
+         ["(defn foo"
+          "  [x] (bar x))"]
+         ["(defn foo [x]"
+          "  (bar x))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(defn foo ([x] (bar x)) ([x y] (if (predicate? x) (bar x) (baz x))))"]
+         ["(defn foo"
+          "  ([x] (bar x))"
+          "  ([x y] (if (predicate? x) (bar x) (baz x))))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(defn foo ([x] (bar x)) ([x y] (if (predicate? x)"
+          "                                 (bar x) (baz x))))"]
+         ["(defn foo"
+          "  ([x] (bar x))"
+          "  ([x y]"
+          "   (if (predicate? x)"
+          "     (bar x)"
+          "     (baz x))))"]
+         {:line-breaking? true}))
+    ;; Formatting with docstring
+    (is (reformats-to?
+         ["(defn foo"
+          "  \"This is a docstring\""
+          "  [x] (bar x))"]
+         ["(defn foo"
+          "  \"This is a docstring\""
+          "  [x]"
+          "  (bar x))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(defn foo \"I have two arities.\" ([x] (bar x)) ([x y] (if (predicate? x) (bar x) (baz x))))"]
+         ["(defn foo"
+          "  \"I have two arities.\""
+          "  ([x] (bar x))"
+          "  ([x y] (if (predicate? x) (bar x) (baz x))))"]
+         {:line-breaking? true}))
+    ;; Multiple body forms indicates complexity that warrants them being placed on separate lines
+    (is (reformats-to?
+         ["(defn multi-body-func [a b] (+ a b) (- a b))"]
+         ["(defn multi-body-func [a b]"
+          "  (+ a b)"
+          "  (- a b))"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(defn multi-body-func \"This is a docstring.\" [a b] (+ a b) (- a b))"]
+         ["(defn multi-body-func"
+          "  \"This is a docstring.\""
+          "  [a b]"
+          "  (+ a b)"
+          "  (- a b))"]
+         {:line-breaking? true}))
+    ;; Formatting with attr-map
+    (is (reformats-to?
+         ["(defn foo {:added \"1.0\"} [x] (bar x))"]
+         ["(defn foo"
+          "  {:added \"1.0\"}"
+          "  [x]"
+          "  (bar x))"]
+         {:line-breaking? true}))
+    ;; Formatting with docstring and attr-map
+    (is (reformats-to?
+         ["(defn foo \"docstring\" {:added \"1.0\"} [x] (bar x))"]
+         ["(defn foo"
+          "  \"docstring\""
+          "  {:added \"1.0\"}"
+          "  [x]"
+          "  (bar x))"]
+         {:line-breaking? true}))
+    ;; Formatting with pre/post conditions
+    (is (reformats-to?
+         ["(defn foo [x] {:pre [(pos? x)]} (bar x))"]
+         ["(defn foo [x]"
+          "  {:pre [(pos? x)]}"
+          "  (bar x))"]
+         {:line-breaking? true}))
+    ;; Preserves intentionally placed blank lines inside large defns (Style Guide exception)
+    (is (reformats-to?
+         ["(defn large-func"
+          "  [x y]"
+          "  (let [z (+ x y)]"
+          ""
+          "    (* z z)))"]
+         ["(defn large-func"
+          "  [x y]"
+          "  (let [z (+ x y)]"
+          ""
+          "    (* z z)))"]
+         {:line-breaking? true}))
+    ;; Issue 105: Format `defn` with docstring and single arity to multiple lines
+    (is (reformats-to?
+         ["(defn my-func \"This is a docstring.\" [x] (+ x 1))"]
+         ["(defn my-func"
+          "  \"This is a docstring.\""
+          "  [x]"
+          "  (+ x 1))"]
+         {:line-breaking? true})))
+  (testing "One-line Functions: https://guide.clojure.style/#one-line-functions"
+    ;; Preserves small functions with no docstrings on one line
+    (is (reformats-to?
+         ["(defn foo [x] (bar x))"]
+         ["(defn foo [x] (bar x))"]
+         {:line-breaking? true}))
+    ;; Preserves multi-arity functions on one line
+    (is (reformats-to?
+         ["(defn foo"
+          "  ([x] (bar x))"
+          "  ([x y]"
+          "   (if (predicate? x)"
+          "     (bar x)"
+          "     (baz x))))"]
+         ["(defn foo"
+          "  ([x] (bar x))"
+          "  ([x y]"
+          "   (if (predicate? x)"
+          "     (bar x)"
+          "     (baz x))))"]
+         {:line-breaking? true})))
+  (testing "Missing style guide reference: line breaks for `if`"
+    ;; Issue 61: Format `if` to one line or 3
+    ;; Acceptable: one line
+    (is (reformats-to?
+         ["(if true \"a\" \"b\")"]
+         ["(if true \"a\" \"b\")"]
+         {:line-breaking? true}))
+    ;; Acceptable: three lines
+    (is (reformats-to?
+         ["(if true"
+          "  \"a\""
+          "  \"b\")"]
+         ["(if true"
+          "  \"a\""
+          "  \"b\")"]
+         {:line-breaking? true}))
+    ;; Not acceptable: mixed
+    (is (reformats-to?
+         ["(if true \"a\""
+          "    \"b\")"]
+         ["(if true"
+          "  \"a\""
+          "  \"b\")"]
+         {:line-breaking? true}))
+    (is (reformats-to?
+         ["(if true"
+          "  \"a\" \"b\")"]
+         ["(if true"
+          "  \"a\""
+          "  \"b\")"]
+         {:line-breaking? true})))
+  (testing "Missing style guide reference: line breaks for `try/catch`"
+    (is (reformats-to?
+         ["(try (+ 1 2) (catch Exception e (println e)))"]
+         ["(try"
+          "  (+ 1 2)"
+          "  (catch Exception e"
+          "    (println e)))"]
+         {:line-breaking? true})))
+  (testing "Missing style guide reference: line breaks for `cond`"
+    (is (reformats-to?
+         ["(cond (foo? x) (do-foo) :else (do-bar))"]
+         ["(cond"
+          "  (foo? x) (do-foo)"
+          "  :else (do-bar))"]
+         {:line-breaking? true})))
+  (testing "Missing style guide reference: line breaks for `condp`"
+    (is (reformats-to?
+         ["(condp = x 1 :one 2 :two)"]
+         ["(condp = x"
+          "  1 :one"
+          "  2 :two)"]
+         {:line-breaking? true})))
+  (testing "Missing style guide reference: line breaks for `defprotocol`"
+    (is (reformats-to?
+         ["(defprotocol MyProtocol (foo [this x y]) (bar [this]))"]
+         ["(defprotocol MyProtocol"
+          "  (foo [this x y])"
+          "  (bar [this]))"]
+         {:line-breaking? true}))))
+
+(deftest test-line-breaking-with-indentation
+  (testing "line-breaks compose correctly with indentation"
+    ;; defn: body on same line → line-breaks split → indent fixes
+    (is (reformats-to?
+         ["(defn foo [x] (+ x 1) (- x 1))"]
+         ["(defn foo [x]"
+          "  (+ x 1)"
+          "  (- x 1))"]
+         {:line-breaking? true :indentation? true}))
+    ;; cond: all on one line → pairs split → indent corrects
+    (is (reformats-to?
+         ["(cond (foo? x) (do-foo) :else (do-bar))"]
+         ["(cond"
+          "  (foo? x) (do-foo)"
+          "  :else (do-bar))"]
+         {:line-breaking? true :indentation? true}))
+    ;; if: mixed lines → normalize → indent fixes
+    (is (reformats-to?
+         ["(if true \"a\""
+          "    \"b\")"]
+         ["(if true"
+          "  \"a\""
+          "  \"b\")"]
+         {:line-breaking? true :indentation? true}))
+    ;; try/catch: all on one line → split → indent
+    (is (reformats-to?
+         ["(try (+ 1 2) (catch Exception e (println e)))"]
+         ["(try"
+          "  (+ 1 2)"
+          "  (catch Exception e"
+          "    (println e)))"]
+         {:line-breaking? true :indentation? true}))))

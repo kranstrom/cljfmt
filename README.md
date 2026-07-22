@@ -370,6 +370,22 @@ In order to load the standard configuration file from Leiningen, add the
   See [INDENTS.md][] for a complete explanation. This will **replace**
   the default indents.
 
+
+* `:line-breaking?` -
+  true if cljfmt should enforce line breaks as specified by the
+  `:line-breaks` rules. Defaults to false. **Experimental.**
+
+* `:line-breaks` -
+  a map of symbols to line break rules. Allows enforcement of structural
+  newlines, such as separating pairs in `cond` or breaking args and bodies
+  in `defn`. See [LINE_BREAKS.md][] for a complete explanation. This will
+  **replace** the default line breaks. Will be used if `:line-breaking?`
+  is enabled. **Experimental.**
+
+* `:extra-line-breaks` -
+  a map of symbols to line break rules. Like `:extra-indents`, this will
+  be **merged** with the default line break rules instead of replacing them.
+
 * `:normalize-newlines-at-file-end?` -
   true if cljfmt should ensure files end with exactly one newline
   character. This will remove multiple trailing blank lines and ensure
@@ -448,3 +464,4 @@ Copyright © 2026 James Reeves
 
 Distributed under the Eclipse Public License either version 1.0 or (at
 your option) any later version.
+[line_breaks.md]: docs/LINE_BREAKS.md

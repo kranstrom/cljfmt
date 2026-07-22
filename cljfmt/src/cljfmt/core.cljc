@@ -376,6 +376,9 @@
 (def blank-line-forms
   (read-resource "cljfmt/blank_line_forms/clojure.clj"))
 
+(def default-line-breaks
+  (read-resource "cljfmt/line_breaks/clojure.clj"))
+
 (def default-options
   {:alias-map                             {}
    :align-binding-columns?                false
@@ -388,6 +391,9 @@
    :extra-aligned-forms                   {}
    :extra-blank-line-forms                {}
    :extra-indents                         {}
+   :extra-line-breaks                     {}
+   :line-breaks                           default-line-breaks
+   :line-breaking?                        false
    :function-arguments-indentation        :community
    :indent-line-comments?                 false
    :indentation?                          true
@@ -750,6 +756,258 @@
          (form-matches-key? zloc k context)
          (contains? (set indexes) (dec (index-of zloc))))))
 
+(defn- format-children [zloc start-idx format-fn]
+  (loop [z zloc
+         idx 0
+         curr (z/down zloc)]
+    (if-not curr
+      z
+      (if (< idx start-idx)
+        (recur z (inc idx) (z/right curr))
+        (let [curr' (format-fn idx curr)]
+          (recur (z/up curr') (inc idx) (z/right curr')))))))
+
+(defn- preceding-whitespaces [z]
+  (->> (iterate z/left* z)
+       (next)
+       (take-while #(some-> % z/tag #{:whitespace :newline :comment}))))
+
+(defn- ensure-blank-line-before [z]
+  (let [lefts (preceding-whitespaces z)
+        newlines (count (filter #(re-find #"\n" (z/string %)) lefts))]
+    (cond
+      (>= newlines 2) z
+      (= newlines 1) (z/insert-left z (n/newlines 1))
+      :else (z/insert-left z (n/newlines 2)))))
+
+(defn- ensure-newline-before [z]
+  (let [lefts (preceding-whitespaces z)]
+    (if (or (some #(re-find #"\n" (z/string %)) lefts)
+            (some #(= :comment (z/tag %)) lefts))
+      z
+      (let [left (z/left* z)]
+        (if (and left (= :whitespace (z/tag left)))
+          (z/right (z/replace left (n/newlines 1)))
+          (z/insert-left z (n/newlines 1)))))))
+
+(defn- ensure-newline-with-prefix [z prefix]
+  (let [lefts (->> (iterate z/left* z)
+                   (next)
+                   (take-while #(some-> % z/tag #{:whitespace :newline :comment :comma})))]
+    (if (some #(and (= :comma (z/tag %)) (= prefix (z/string %))) lefts)
+      (ensure-newline-before z)
+      (let [z' (ensure-newline-before z)]
+        (z/insert-left* z' (n/comma-node prefix))))))
+
+;; Replaces preceding whitespace with a single space.
+;; Implicitly relies on the indentation engine running *after* line-breaking
+;; in the formatting pipeline to fix the single space into correct structural indentation.
+(defn- remove-newline-before [zloc]
+  (let [lefts (->> (iterate z/left* zloc)
+                   (next)
+                   (take-while #(some-> % z/tag #{:whitespace :newline})))]
+    (if (seq lefts)
+      (let [first-ws (last lefts)
+            rest-ws (butlast lefts)
+            z-after-replace (z/replace first-ws (n/spaces 1))]
+        (loop [z z-after-replace
+               to-remove (count rest-ws)]
+          (if (pos? to-remove)
+            (recur (z/remove* (z/right* z)) (dec to-remove))
+            (or (z/right* z) zloc))))
+      zloc)))
+
+(defn- meaningful-siblings [zloc]
+  (when zloc
+    (->> (iterate z/right zloc)
+         (take-while identity)
+         (remove #(or (z/whitespace? %) (= :newline (z/tag %))))
+         (remove uneval?))))
+
+(defn- meaningful-children [zloc]
+  (meaningful-siblings (z/down zloc)))
+
+(defn- has-newline-before? [zloc]
+  (when zloc
+    (boolean (some #(re-find #"\n" (z/string %)) (preceding-whitespaces zloc)))))
+
+(defn- apply-consistent-rule [zloc start-idx opts]
+  (let [args (drop (inc start-idx) (meaningful-children zloc))]
+    (if (empty? args)
+      zloc
+      (let [needs-newlines? (or (some #(re-find #"\n" (z/string %)) args)
+                                (some has-newline-before? args)
+                                (> (count args) (:max-children opts 3)))]
+        (format-children zloc (inc start-idx)
+                         (fn [_ curr]
+                           (if needs-newlines?
+                             (ensure-newline-before curr)
+                             (remove-newline-before curr))))))))
+
+(defn- apply-pairs-rule [zloc start-idx opts]
+  (let [blank-lines? (:blank-lines? opts false)
+        split-pairs? (:split-pairs? opts false)
+        pair-prefix  (:pair-prefix opts)
+        list-form? (z/list? zloc)]
+    (format-children zloc (inc start-idx)
+                     (fn [idx curr]
+                       (let [diff (- idx start-idx)
+                             is-pair-start (if list-form? (odd? diff) (even? diff))
+                             is-first-pair (= diff (if list-form? 1 0))
+                             should-break? (or is-pair-start split-pairs?)]
+                         (if should-break?
+                           (if (and blank-lines? is-pair-start (not is-first-pair))
+                             (ensure-blank-line-before curr)
+                             (if (and pair-prefix (not is-pair-start))
+                               (ensure-newline-with-prefix curr pair-prefix)
+                               (ensure-newline-before curr)))
+                           curr))))))
+
+(defn- format-arity-list [zloc opts]
+  (let [body-forms (next (meaningful-children zloc))
+        needs-newlines? (or (> (count body-forms) (:max-body-forms opts 1))
+                            (re-find #"\n" (z/string zloc)))]
+    (format-children zloc 1
+                     (fn [_ curr]
+                       (if needs-newlines?
+                         (ensure-newline-before curr)
+                         (remove-newline-before curr))))))
+
+(defn- apply-defn-rule [zloc opts]
+  (let [all-children (meaningful-children zloc)
+        header-nodes (take-while #(not (or (z/vector? %) (z/list? %))) all-children)
+        has-docstring? (some #(and (= :token (z/tag %)) (str/starts-with? (z/string %) "\"")) header-nodes)
+        has-attr-map? (boolean (some z/map? header-nodes))
+        has-meta? (or has-docstring? has-attr-map?)
+        args-node (first (filter z/vector? all-children))
+        body-forms (if args-node
+                     (next (meaningful-siblings args-node))
+                     (drop 2 all-children)) ; for multi-arity, everything after name
+        needs-newlines? (or has-meta?
+                            (:force-args-newline? opts false)
+                            (> (count body-forms) (:max-body-forms opts 1))
+                            (re-find #"\n" (z/string zloc)))
+        args-has-nl? (has-newline-before? args-node)
+        first-body-has-nl? (has-newline-before? (first body-forms))
+        preserve-args-nl? (and args-has-nl? first-body-has-nl?)]
+    (format-children zloc 2
+                     (fn [_ curr]
+                       (cond
+                         (and (= :token (z/tag curr)) (str/starts-with? (z/string curr) "\"")) (ensure-newline-before curr) ; docstring
+                         (z/map? curr) (ensure-newline-before curr) ; attr-map
+                         (and args-node (= (z/node curr) (z/node args-node)))
+                         (if (or has-meta? preserve-args-nl?)
+                           (ensure-newline-before curr)
+                           (remove-newline-before curr))
+                         :else
+                         (let [formatted-curr (if (and (not args-node) (z/list? curr))
+                                                (format-arity-list curr opts)
+                                                curr)]
+                           (if needs-newlines? (ensure-newline-before formatted-curr) formatted-curr)))))))
+
+(defn- apply-ns-rule [zloc opts]
+  (format-children zloc 2
+                   (fn [_ curr]
+                     (let [curr' (ensure-newline-before curr)
+                           inner-z (z/down curr')
+                           inner-kw-str (and inner-z (= :token (z/tag inner-z)) (z/string inner-z))
+                           inner-children (meaningful-siblings inner-z)
+                           ns-kws (:ns-keywords opts ns-reference-symbols)]
+                       (if (and inner-kw-str (str/starts-with? inner-kw-str ":") (ns-kws (keyword (subs inner-kw-str 1))))
+                         (let [break? (or (> (count inner-children) (inc (:max-dependencies opts 1)))
+                                          (and (:single-dependency-newline? opts)
+                                               (= (count inner-children) 2)))]
+                           (format-children curr' 1
+                                            (fn [idx icurr]
+                                              (if (or (z/whitespace? icurr) (= :newline (z/tag icurr)))
+                                                icurr
+                                                (if break?
+                                                  (if (and (:first-entry-same-line? opts) (= idx 1))
+                                                    (remove-newline-before icurr)
+                                                    (ensure-newline-before icurr))
+                                                  (remove-newline-before icurr))))))
+                         curr')))))
+
+(defn- apply-always-body-rule [zloc start-idx _opts]
+  (let [start-idx (or start-idx 2)]
+    (format-children zloc start-idx
+                     (fn [_ curr]
+                       (ensure-newline-before curr)))))
+
+(defn- line-breaker-fn [_sym _context rule]
+  (let [type (first rule)
+        opts (if (map? (last rule)) (last rule) {})]
+    (case type
+      :consistent  (fn [zloc] (apply-consistent-rule zloc (second rule) opts))
+      :pairs       (fn [zloc] (apply-pairs-rule zloc (second rule) opts))
+      :defn        (fn [zloc] (apply-defn-rule zloc opts))
+      :ns          (fn [zloc] (apply-ns-rule zloc opts))
+      :always-body (fn [zloc] (apply-always-body-rule zloc (second rule) opts))
+      (constantly nil))))
+
+(defn- compile-single-rule [[key opts] context]
+  (let [fns (map (fn [rule]
+                   (let [inner? (= :inner (if (map? (last rule)) (last (butlast rule)) (last rule)))
+                         idx (second rule)
+                         base-fn (line-breaker-fn key context rule)]
+                     (if inner?
+                       (fn [zloc]
+                         (if-let [inner-z (nth (meaningful-children zloc) (inc idx) nil)]
+                           (if-let [res (base-fn inner-z)]
+                             (z/up res)
+                             zloc)
+                           zloc))
+                       base-fn)))
+                 opts)]
+    (fn [zloc]
+      (reduce (fn [z f]
+                (if-let [res (f z)]
+                  res
+                  z))
+              zloc
+              fns))))
+
+(defn- compile-line-breakers [rules context]
+  (let [exact-rules    (into {} (filter #(or (symbol? (key %)) (keyword? (key %))) rules))
+        pattern-rules  (filter #(or (pattern? (key %)) (vector? (key %))) rules)
+        exact-breakers (into {} (map (fn [[k opts]]
+                                       [k (compile-single-rule [k opts] context)])
+                                     exact-rules))
+        pattern-breakers (map (fn [[k opts]]
+                                [k (compile-single-rule [k opts] context)])
+                              pattern-rules)]
+    (fn [zloc]
+      (if (or (z/list? zloc) (z/vector? zloc))
+        (if-some [sym (form-symbol (z/down zloc))]
+          (let [full-sym (fully-qualified-symbol sym context)
+                sym-name (name sym)
+                sym-ns   (or (some-> full-sym namespace) (namespace sym))
+                breaker (or (get exact-breakers sym)
+                            (get exact-breakers full-sym)
+                            (some (fn [[k b]]
+                                    (when (if (vector? k)
+                                            (parts-match-vector-key? sym-ns sym-name k)
+                                            (re-find k sym-name))
+                                      b))
+                                  pattern-breakers))]
+            (if breaker
+              (breaker zloc)
+              zloc))
+          zloc)
+        zloc))))
+
+(defn- get-line-break-rules [opts]
+  (merge (:line-breaks opts) (:extra-line-breaks opts)))
+
+(defn- enforce-line-breaks [form opts]
+  (let [rules (get-line-break-rules opts)
+        ns-name (or (::ns-name opts) (find-namespace (z/of-node form)))
+        context {:alias-map (:alias-map opts)
+                 :refer-map (:refer-map opts)
+                 :ns-name ns-name}
+        breaker (compile-line-breakers rules context)]
+    (transform form edit-all #(or (z/list? %) (z/vector? %)) breaker)))
+
 (defn- matching-form? [zloc form-indexes context]
   (and (or (z/list? zloc)
            (= (z/tag zloc) :fn)
@@ -908,6 +1166,8 @@
            sort-ns-references)
          (cond-> (:split-keypairs-over-multiple-lines? opts)
            split-keypairs-over-multiple-lines)
+         (cond-> (and (:line-breaking? opts) (:line-breaks opts))
+           (enforce-line-breaks opts))
          (cond-> (:remove-consecutive-blank-lines? opts)
            remove-consecutive-blank-lines)
          (cond-> (:remove-surrounding-whitespace? opts)
